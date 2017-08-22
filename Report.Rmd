@@ -1,0 +1,551 @@
+---
+title: "Impact of email on voter participation"
+author: "Adam Reilly, Danish Iqbal, Guillaume De Roo"
+date: "June 5, 2017"
+output:
+  pdf_document:
+    toc: true
+    number_sections: true
+    includes:
+      in_header: header.tex
+---
+ 
+```{r echo=FALSE, message=FALSE}
+# Loading packages and original data
+ 
+## Installing packages if needed 
+list.of.packages <- c("knitr","ggplot2", "dplyr","plyr","stargazer", "tibble","reshape", "GGally")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+ 
+## Loading packages
+library(dplyr)
+library(plyr)
+library(knitr)
+options(knitr.kable.NA = '')
+library(ggplot2)
+library(stargazer)
+library(tibble)
+library(reshape)
+library(GGally)
+ 
+## Loading original data
+# On your computer, change the "path" of the data folder
+path = "~/Documents/Data Science Classes/Berkeley/W241 - Experiments and Causality/Group project/R Analysis"
+setwd(path)
+df_original = read.csv("./data/cd34_lastcall.csv")
+```
+ 
+```{r echo=FALSE, message=FALSE}
+# Create a cleaner dataset
+ 
+# Copy dataset
+df = df_original
+ 
+#Filter abnormal rows
+df = df[df$YearBorn!=1850,]
+ 
+## Recode Email opened to FALSE/TRUE
+df$EmailOpened = (df$EmailOpened == 1)
+ 
+## Recode some dupl_address
+df$dupl_addr[df$dupl_addr == 0] = ""
+df$dupl_addr[df$dupl_addr == 1] = ""
+ 
+## Numerization of HouseFraction
+df$HouseFraction = mapvalues(df$HouseFractionNumber, from = levels(df$HouseFractionNumber),
+          to = c(NA, 1/2, 1/4, 1/5, 1/6, 1/8, 2/1, 2/6, 3/1, 3/4, 3/5, 3/6, 3/8, 4/5, 5/8, 6/8, 7/8))
+df$HouseFraction = as.numeric(as.character(df$HouseFraction))
+ 
+## Simplification of postal code
+df$Zip5 = factor(substr(df$Zip, 1, 5))
+ 
+## Count of frequency of address and see % of treatment and open by address
+c = df%>%
+  dplyr::group_by(dupl_addr) %>%
+  dplyr::summarise(AddrCount = n(), sum_treat = sum(treatment), sum_open = sum(EmailOpened))
+c[1,"AddrCount"] = 1
+df = left_join(df, c, by = "dupl_addr", copy = TRUE)
+rm(c)
+ 
+df$sum_treat[df$Addr_Count == 1] = df$treatment[df$Addr_Count == 1]
+df$sum_open[df$Addr_Count == 1] = df$EmailOpened[df$Addr_Count == 1]
+ 
+## Create a column with the blocks
+df$block = as.factor(paste0("v",df$X2016ge,df$X2016pe,df$X2014ge,df$X2014pe))
+ 
+## Clean up of missing value
+df[df == ""] = NA
+df$Gender = factor(df$Gender)
+ 
+## Rename some columns
+names(df) = sub("^X2017Method$", "X2017", names(df))
+ 
+## Create useful lists of parameters
+experiment_list = c("treatment", "EmailOpened","X2017","block", "sum_treat", "sum_open")
+hist_election_list = c("X2016ge", "X2016pe",  "X2014ge", "X2014pe")
+other_cov_list = c("YearBorn", "Gender", "PartyCode", "HouseFraction", "AddrCount", "Zip5")
+ 
+## Keep only the columns of interest, and c
+df = df[,c(experiment_list, hist_election_list, other_cov_list)]
+```
+\pagebreak
+ 
+*In this paper, we investigate the effect of email reminders on voter participation. More specifically, we sent an email containing a politically neutral reminder about California's 34th congressional district special election to around 40,000 people. We find a positive but not statistically significant impact. We suggest several improvements to the methodology which could lead to more conclusive results*
+ 
+# Introduction 
+ 
+Given the consistent low voter turnout that has plagued American elections, political scientists have studied a variety of methods in attempts to increase participation. These studies have covered a myriad of mobilization strategies; primarily they have focused on traditional methods such as phone banking, canvassing and mailers, but there are a few that have looked at texting or email. Many of these studies have shown contradictory results where one study would find a positive effect from mobilization but another would then find no effect or even slight negative effect.
+ 
+![](images/turnout.jpg)
+ 
+These contradictory findings can be explained in part by a simple mathematical model quantifying whether a particular person will vote in a particular election. This formula weighs a subject’s innate tendency to vote (variable P) combined with the effects of any voter mobilization on that particular person (variable M) against the general public’s level of interest in one particular election (variable G); if P+M exceeds G, then this model predicts that the individual would vote (Arcenauex & Nickerson- 2009). This provides an elegant model whereby studies can use past voter history combined with measurement of mobilization efforts to quantify whether mobilization appeared to have any effects. It is important to note that G widely varies between elections; Presidential races have high general interest, whereas small local races often have very little interest. This model helps explain why many studies looking at the same methods of mobilization have very different conclusions: in races with high general interest, people with a high tendency to vote won’t need any reminders, but mobilization could work effectively on people who vote more intermittently. In very low interest elections, mobilization may have very little effect on intermittent voters, but may increase turnout among more consistent voters. As such, heterogenous treatment effects will vary based on the type of election.
+ 
+Of the various types of voter contact, canvassing has consistently been shown to have the largest positive effect in terms of mobilization. Canvassing has been shown to increase voter participation among those successfully reached by an average of 7% in aggregations of experiments (Gerber, Green and Nickerson, 2003). One of the drivers of success in this form of mobilization (and to a lesser degree phone banking) is the personalized interaction between volunteers and potential voters. This is part of the logic behind the social occasion theory, which posits that voting is a social occasion and therefore direct social contact is an effective manner at driving people to the polls (Malhotra, Michaelson, Rogers and Valenzuela 2011). One alternate theory is the noticeable reminder theory, which posits that even non-personalized contacts can have an effect in increasing voter participation. The noticeable reminder theory does appear to have less general applicability as it is more difficult to use mobilization methods based on these method of contact to increase participation. There are other theories as to why people choose to vote, including voters wanting to see themselves as good people and linking voting with self-image (Bryan, Walters, Rogers and Dweck 2011). An election can also trigger one’s sense of “external political efficacy” (Garcia-Bedolla and Michaelson, 2012), or one’s perception that they actually have an ability to make a difference with their vote, which can be critical to helping increase voter participation.
+ 
+One study that provides evidence of the noticeable reminder theory in action used “cold” text messages in order to remind people to vote. Using methodology similar to the previously described formula, this study found statistically significant results when sending text messages in a extremely low and a low-to-medium interest election, where both of them increased participation by about 0.75%-0.8% (Malhotra, Michaelson, Rogers and Valenzuela 2011). The increase in voting rates may not seem dramatic, the benchmark for cold contacts (which includes certain types of mailers and emails) is about a 0.5% increase in voter participation (Green & Gerber, 2008). As would be expected, the group where the messages had the most effect varied based on the general interest in the lection. This study extrapolated that in a high interest election, this could potentially equate to a 2% increase in turnout. Another study that used “warm” text messages (messages where someone had signed up to receive them) showed a 3% increase in participation using intent-to-treat metrics, implying that mass impersonalized contact can be used more effectively when combined with more personalized methods (Dale & Strauss 2009).
+ 
+While there have been studies aimed at directly trying to measure the effects of email on voter participation, this method has seen little academic study in comparison to more traditional methods of voter contact. Studies looking at the effects of trying to increase voter registration via email have actually had a counter-intuitive result (it actually appeared to lower registration among the treatment group), possibly due to procrastination related effects where the subjects downloaded registration forms from the internet, but failed to then follow up and send them in (Bennion and Nickerson 2011).
+ 
+The one large scale study that did look at increasing voter participation via email found very little effect (Nickerson, 2007); however, the study did note that there are a variety of reasons to believe that email could potentially have a positive effect, including its general similarity to direct mailing (which has proven to be effective in certain circumstances) and that email has shown to induce levels of trust that are at least somewhat close to face-to-face contact in certain types of experiments . This study look at results from 13 experiments covering approximately 230,000 people, and included unsolicited emails, opt-in emails and opt-out emails- allowing it to cover a wide potential range of formats. The setup that was most similar to our experiment design was engineered by obtaining lists of student emails directly from schools, and sending out unsolicited emails to these students. It’s critical to note that the open rate on these emails was incredibly high for unsolicited emails at 20%; based on information provided by our company we picked to help us send our emails, a rate above 4% is extremely abnormal. However, this experiment was run 15 years ago on a very small cross-section of voters. It is reasonable to assume that the way people use email has evolved in the interim time period and that the sample population had significant differences in how they used email compared to the general population given the narrow age range and the fact that they were all in college. It is also worth noting that this particular experiment did not attempt any placebo construction and sent a number of emails. The second part may be especially salient if the open rate is actually the percentage of subjects who opened any email instead of the percentage of emails that were opened.
+ 
+Differences in political engagement and internet engagement could mean that things have changed in the interim. Unlike registration, participation does not really have the ability to have a procrastination effect. As such, even if someone was only able to have a small effect on voting participation, the cheap relative cost of emails in comparison to other methods of contact still might make an email participation campaign beneficial.
+ 
+We initially thought to include information about past voting participation of both the voter and the voter’s neighbors, based on the findings from a study showing that physical mailings that included similar information were extremely effective at increasing voter turnout (Green, Gerber and Larimar, 2008) ; however, it’s also seen as politically risky because it comes across as very invasive to many voters. Our thought was that because email is more private than mail (especially since some studies that used neighborhood voting history to attempt to increase participation used postcards and not sealed letters), that sending this information via email would have less of an invasive effect.
+ 
+We also examined studies to help us attempt to craft the most effective language in terms of trying There are studies that show that focusing on low voter turnout may actually have a negative effect on voter participation rates (Gerber and Rogers, 2009). However, it’s hard to determine whether this study would be fully applicable to our experiment design as this study was focused on a candidate trying to increase turnout among potential supporters and the treatment was delivered by a live person via phone instead of email. It is logical to assume that there could be substantive differences in reaction from both the method of treatment and the differences in focus. Our focus was to attempt to use low voter turnout to emphasize how a small block of voters could have an outsized effect on this election for whomever their candidate of choice was. Since our email subject line focused on the civic nature of voting, we believed that if we only mentioned the low participation rates in the email body that there would be a minimized chance for it to have a negative effect, assuming that it would have a negative effect at all. This attempt to give the voter a feeling of empowerment by underlining why their vote could be especially important in this race. We did still want to include information about low participation in the hopes that it could trigger our subjects’ sense of political efficacy.
+ 
+\newpage
+ 
+# Past Election Data
+ 
+In this section, we share with the reader some insights from the election data of the 34th Congressional district before 2017, which help build the experimentation. This data was obtained from the Election Division of the State of California.[^1]
+ 
+[^1]: Data obtained on March 2nd via written request
+ 
+## Filtering population of interest
+ 
+Starting from the Los Angeles county level information, we narrowed the population of interest through successive filters.
+ 
+During these steps, we tried to avoid introducing bias, but list the underlying assumption for the reader to judge the ability to generalize:
+ 
+* We selected the population **with emails**. *Clear bias: registered email will probably reflect bias in who has an email, probably younger and wealthier population*
+* We narrowed the county level information to the congressional district by only selecting **valid zipcodes**.[^2] *Potential bias: zipcode may be written erroneously more often for some population*
+* We then selected people with **active emails** (i.e. filtered invalid emails through regex rules), to avoid being charged for invalid emails. *Potential bias: emails may be written erroneously more often for some population*
+* We filtered for people **above of age of 22, and born after 1900**, since we were interested in people who already voted in 2014, to be able to block on past voting history. *Potential bias: result may not be generalizable to youngest population 18-21*
+* Excluded people with **duplicate emails** across the database (emails used by person inside or outside the district) to avoid uncontrolled spill overs. *Potential bias: may have excluded "family" addresses*
+ 
+[^2]: We narrowed the database to the following zip codes: 90004-07 90010 90012-15 90017-23 90026 90029 90031-33 90038 90041-42 90057-58 90063 90065 91040 91205 91342-43 91405 92264
+ 
+## Available data
+ 
+The resulting data obtained from the administration contained a population of `r dim(df)[1]` voters with `r dim(df_original)[2]-8` covariates.[^3] To perform our data exploration, we limit ourselves to the covariates with the most potential explanatory power in the context of our election experiment.
+ 
+[^3]: List of available fields: `RegistrantID, LastName, FirstName, AddressNumber, HouseFractionNumber, StreetName, UnitNumber, Zip, Email, DOB, YearBorn, Gender, PartyCode, RegistrationDate, NamePrefix, X2017, X2016ge, X2016pe, X2014ge, X2014pe,`
+ 
+Since we do not really care how people voted (i.e. early voting, poll, etc.), we also build dummy variables (1 if person voted, 0 otherwise). And add a column counting the number fo times a physical address appears (`AddrCount`).
+ 
+The resulting dataset has the following columns:
+ 
+```{r echo=FALSE, message=FALSE}
+# Creation of selection data frame
+colnames(df)
+```
+ 
+## Summary statistics
+ 
+We performed multiple analyses to familiarize ourselves with our population of interest. The main ones can be found in Appendix.
+ 
+Unsurprisingly, one of the most important correlations which appeared during those analysis is the correlation between participations shown in the table below.
+ 
+```{r echo=FALSE, message=FALSE}
+ 
+cell.cor = function(x, y){  
+  c = cor.test(as.numeric(x), as.numeric(y))
+  corl = format(c$estimate, digits = 2)
+  p = c$p.value
+  txt = corl
+  if(p<0.05) txt = paste(corl, "*")
+  if(p<0.01) txt = paste(corl, "**")
+  if(p<0.001) txt = paste(corl, "***")
+  return(txt)
+}
+ 
+table.cor = function(dtf){
+  n = dim(dtf)[2]
+  d = data.frame("Voted" =  rep(NA,n), dtf[1:n,], row.names = colnames(dtf))
+  d[] = NA
+  for (i in 1:n){
+    d[i,1] = paste(format(mean(dtf[,i], na.rm = TRUE)*100, digits = 2),"%")
+    for (j in 1:i){
+      d[i,j+1] = cell.cor(dtf[,i],dtf[,j])
+    }
+  }
+  return(d)
+}
+ 
+kable(table.cor(df[,hist_election_list]), caption = "Participation and correlation across elections")
+```
+ 
+with p-value of correlation coefficient summarized by \* = < 0.05, \*\* = < 0.01 and \*\*\* = < 0.001. 
+ 
+## Search for blocking variable
+ 
+Given the high level of correlation between election participation, and general knowledge of voter behavior, we can imagine that there are covariates which can explain some of the variability of the vote, and hence be used for blocking to make the experiment more accurate.
+ 
+To find them, we proceed to do a stepwise forward regression, and display the adjusted $R^2$ from the first 5 steps. We can see that:
+ 
+* Participation to the previous election seems to be the best indicator of participation to the election at hand
+* Gender could seem to be the next best predictor. However, the variable is only available on ~35% of the database, so it could be misleading, and blocking cannot be implemented on the full database
+* The next indicator seems to vary depending on the election
+ 
+```{r echo=FALSE, message=FALSE}
+r2 = function(form, d = df){
+  model = lm(as.formula(form), data=d)
+  return(summary(model)$adj.r.squared)
+}
+ 
+f = c("X2016ge ~ X2016pe",
+      "X2016ge ~ X2016pe+Gender",
+      "X2016ge ~ X2016pe+Gender+X2014ge",
+      "X2016ge ~ X2016pe+Gender+X2014ge+Zip5",
+      "X2016ge ~ X2016pe+Gender+X2014ge+Zip5+PartyCode",
+      "X2016pe ~ X2014ge",
+      "X2016pe ~ X2014ge+Gender",
+      "X2016pe ~ X2014ge+Gender+PartyCode",
+      "X2016pe ~ X2014ge+Gender+PartyCode+X2014pe",
+      "X2016pe ~ X2014ge+Gender+PartyCode+X2014pe+Zip5",
+      "X2014ge ~ X2014pe",
+      "X2014ge ~ X2014pe+Gender",
+      "X2014ge ~ X2014pe+Gender+YearBorn",
+      "X2014ge ~ X2014pe+Gender+YearBorn+PartyCode",
+      "X2014ge ~ X2014pe+Gender+YearBorn+Zip5+PartyCode"
+)
+regression = data.frame(R2 = sapply(f,r2)*100)
+kable(regression, digits = 2, caption = "Adjusted $R^2$ by regression")
+```
+ 
+Based on this preliminary analysis, we decided to use the election history as a blocking variable, resulting in 16 blocks (= $2^n$ with n = 4 previous elections[^4])
+ 
+[^4]: Voting or not in the General election 2016, Primary election 2016, State general election 2014, and Primary election 2014.
+ 
+# Description of the Experiment
+ 
+Based on our first analyses, literature and hypotheses, we designed an experiment to assess the impact of emails on voter participation.
+ 
+## Treatment
+ 
+Since we anticipate email opening rates to be low, we designed an experiment with a placebo to help contain the effects of “non-compliance”:
+ 
+* **Placebo group** is sent a generic email reminding them of a blood drive that’s happening in the district
+* **Treatment group**, on the other hand, is sent an email reminding them of the upcoming district election.
+* The subject lines of the emails are kept as similar as possible, with a difference being between the words blood drive and voting.
+ 
+While both emails remind the subject of participating in the blood drive or of voting, the treatment email is more elaborate with i) details on when and where to vote, ii) links to the different candidates and iii) language encouraging voting by mentioning how close previous local elections were and how more voters could change results.  (see Appendix for emails)
+ 
+Emails to both groups were sent on the same day and at the same time; two days before the end of the local election which took place on April 4, 2017. 
+ 
+## Metrics
+ 
+We are using the participation to the election as reported by the Secretary of State of the State of California as our main metric.
+ 
+Open rate in the 48h before the closing of the polls is also recorded. In future analyses which define the treatment as the subject reading opening the email (and not deleting, or reading the title), the opening rate will correspond to the “compliance” rate.
+ 
+## Participants
+ 
+We split our sample of `r dim(df)[1]` voters from the CA-34 district into
+ 
+* a treatment group of `r sum(df$treatment)` individuals
+* a placebo group of `r dim(df)[1] - sum(df$treatment)` individuals
+ 
+In addition, as described in previous section, we made sure to have an equal ratio of treatment to placebo in the 16 blocks corresponding to the different voting histories.
+ 
+The treatment and placebo group were further checked for potential variation along the different covariates, but none were found with statistical significance: 
+ 
+```{r echo = FALSE, message = FALSE}
+# Reproducing Adam’s logic but more compact
+#combinations = expand.grid(c(0,1),c(0,1), c(0,1), c(0,1))
+#for (i in 1:dim(combinations)[1]){
+#  vector = paste0("v",combinations[i,1],combinations[i,2],combinations[i,3],combinations[i,4])
+#  sub = paste0("subset(dtf, dtf$X2016ge ==", combinations[i,1],
+#                          "& dtf$X2016pe ==", combinations[i,2],
+#                          "& dtf$X2014ge ==", combinations[i,3],
+#                          "& dtf$X2014pe ==", combinations[i,4],")")
+#  eval(parse(text=paste0(vector,"=",sub)))
+#}
+ 
+# More efficient and closer to what we want
+cov_check = df %>%
+            dplyr::group_by(treatment) %>%
+            dplyr::summarise("Date of birth (Mean)" = mean(YearBorn),
+                      "- Date of birth (Std)" = sd(YearBorn),
+                      "Gender (% know male)" = 100*mean(Gender == "M", na.rm = TRUE),
+                      "- Gender (Std)" = 10*sd(Gender == "M", na.rm = TRUE),
+                      "Addr Count (Mean)" = mean(AddrCount),
+                      "- Addr Count (Std)" = sd(AddrCount),
+                      "DEM (Mean %)" = 100*mean(PartyCode == "DEM", na.rm = TRUE),
+                      "- DEM (Std)" = 10*sd(PartyCode == "DEM", na.rm = TRUE),
+                      "REP (Mean %)" = 100*mean(PartyCode == "REP", na.rm = TRUE),
+                      "- REP (Std)" = 10*sd(PartyCode == "REP", na.rm = TRUE)
+                      )
+cov_check = t(cov_check)
+colnames(cov_check) = c("Placebo", "Treatment")
+cov_check = cov_check[rownames(cov_check) != "treatment",] # Removing treatment row
+kable(cov_check, digits = 2, caption = "Covariate check")
+```
+ 
+\pagebreak
+ 
+# Experiment results
+ 
+There are multiple ways to assess the impact of emails to voters, depending on the hypothesis and which effects we include or exclude. Unfortunately, none is perfect since there is notably no way to know which voters only read the title of the email, but did not open it, for instance.
+ 
+* If we define the treatment broadly as "receiving the email" to take into account the impact of the title, calculating the Intent-to-Treat (ITT) effect would be a more appropriate metric
+* If we define the treatment purely as "opening the email" (and exclude the impact of only seeing the title for instance), calculating the Complier Average Causal Effect (CACE) can help us estimate the impact
+ 
+In each case, it is worth noting that we exclude the potential effect that receiving the placebo can have (for example, seeing an email on blood drive may increase a sense of civic duty and propensity to vote)
+ 
+## Intent-to-Treat (ITT)
+ 
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+lm_itt_blocks = lm(X2017 ~ treatment + block, data = df)
+p_itt_blocks = summary(lm_itt_blocks)$coefficients[2,"Pr(>|t|)"]
+lm_itt = lm(X2017 ~ treatment, data = df)
+p_itt = summary(lm_itt)$coefficients[2,"Pr(>|t|)"]
+```
+ 
+If we focus on the ITT, we observe **no statistically significant effect of the treatment**, given that we get a p value of `r p_itt_blocks` with blocks (and `r p_itt` without)
+ 
+```{r echo=FALSE, message=FALSE, warning=FALSE, results = 'asis'}
+stargazer(lm_itt, lm_itt_blocks, header = FALSE, single.row = TRUE, title = "Estimation of ITT")
+```
+ 
+##  Complier Average Causal Effect (CACE)
+ 
+Focus on the effect of opening the email, there are actualy multiple way to calculate the CACE, depending on how much we are willing to rely on the placebo design.
+ 
+### Placebo design robustness
+ 
+In experiments with low compliance such as email campaigns, a placebo design can help us gain statistical significance when estimating the CACE. For that, the placebo has to mimic the treatment, so that the compliers from the placebo group and from the control group have the same characteristics.
+ 
+```{r echo=FALSE, message=FALSE}
+vote = cast(df, treatment ~ EmailOpened, value = "X2017", fun.aggregate = mean)
+colnames(vote) = c("treatment", "% Vote (Not Open)", "% Vote (Open)")
+ 
+tab = as.data.frame.matrix(table(df$treatment, df$EmailOpened))
+colnames(tab) = c("Nb (Not Open)", "Nb (Open)")
+ 
+tab = cbind (tab, vote[,2:3]*100)
+rownames(tab) = c("Placebo", "Treated")
+ 
+tab$`% opened` = tab$`Nb (Open)`/(tab$`Nb (Not Open)`+tab$`Nb (Open)`)*100
+ 
+tab = tab[,c(3,1,4,2,5)]
+ 
+kable(tab, digit = c(1,0,1,0,2), caption = "Vote and emails opening by treatment")
+```
+ 
+```{r echo=FALSE, message=FALSE}
+p = prop.test(x = c(tab["Placebo","Nb (Open)"], tab["Treated","Nb (Open)"]),
+          n = c(sum(tab["Placebo",]), sum(tab["Treated",])), correct = FALSE)
+```
+ 
+We made several tests to test that hypothesis:
+ 
+* we conducted a proportion test to see if there was a statistical difference in compliance between groups. We found it impossible to reject the null hypothesis (p = `r p$p.value`)
+* we conducted regressions on covariates to identify the source of the difference and potentially correct, but were unable to find statistical significant drivers of opening rate among the available covariates (see Appendix)
+ 
+In presence of those mixed messages, we followed 2 approaches to get to the CACE
+ 
+### Relying on the placebo design
+ 
+Let us assume that the Placebo design worked, i.e. the 2 populations which opened the emails have similar characteristics.
+ 
+In this case, we first note that we may want to rely to the voting dummies instead of the blocks to increase statistical power, given the variation between blocks and small numbers in some of them
+ 
+```{r echo=FALSE, message=FALSE}
+# Check the $ of treatment by block
+t = table(df$block[df$EmailOpened], df$treatment[df$EmailOpened])
+t = as.data.frame.matrix(t)
+t = rownames_to_column(t, "block")
+t$treated = round(t$"1"/(t$"1"+t$"0")*100)
+names(t) = c("Block","Not Treated", "Treated", "% treated")
+kable(t, caption = "Emails opened by treatment")
+```
+ 
+```{r echo=FALSE, message=FALSE}
+# Do the regressions
+lm_cace_blocks = lm(X2017 ~ treatment + block, data = subset(df, df$EmailOpened))
+p_cace_blocks = summary(lm_cace_blocks)$coefficients[2,"Pr(>|t|)"]	
+lm_cace_dummies = lm(X2017 ~ treatment + X2016ge + X2016pe + X2014ge + X2014pe, data = subset(df, df$EmailOpened))
+p_cace_dummies = summary(lm_cace_dummies)$coefficients[2,"Pr(>|t|)"]
+lm_cace = lm(X2017 ~ treatment, data = subset(df, df$EmailOpened))
+p_cace = summary(lm_cace)$coefficients[2,"Pr(>|t|)"]
+```
+ 
+Unfortunately, we find **no statistically significant effect**, with a p value of `r p_cace`. Worst, correcting for past voting history actually decreases the statistical significance of the treatment (p value of `r p_cace_blocks` with blocks,  and `r p_cace_dummies` with dummies)
+ 
+```{r echo=FALSE, message=FALSE, warning=FALSE, results = 'asis'}
+stargazer(lm_cace, lm_cace_dummies, lm_cace_blocks, header = FALSE, single.row = TRUE, title = "Estimation of CACE")
+```
+ 
+### Using Complier Proportion
+ 
+We could also discard the Placebo design and use the formula
+ 
+$$ CACE = \frac{ITT}{\alpha}$$
+ 
+where $\alpha$ is the percentage of complier. However since the ITT already gave insignificant result, the CACE will mathematically get even worse results with this methodology.
+ 
+## Further analyses
+ 
+We obtain similar results if we consider Heterogeneous Treatment Effects, and Spillover effects in the household (see Appendix).
+ 
+Excluded population (e.g. people without email in registry) cannot be used as a control group since they have different characteristics (see Appendix)
+ 
+\pagebreak
+ 
+# Limitations and further improvements
+ 
+(Danish)
+ 
+Our palcebo design could have been improved on. While our email subjects were similar, they weren’t identical, calling the placebo into question. The placebo subject was: [Urgent Call to Participation] Important Blood Drive and the Treatment email subject was [Urgent Call to Participation] Important Congressional Election. The nature of email subject made it difficult for placebo and treatment email subject line to be identical. 
+ 
+Furthermore, our experiment used a short time frame of two days prior to election  to track email openings. A design which gave more time for the recipient to open the email and count as tracked may have seen a greater sample in the treatment group. Furthermore, altering the days which the email was sent (Sunday vs Monday) could have altered results as research from the retail industry has shown that Tuesday’s have higher open rates ( SOURCE: https://customer.io/blog/timing-week-day-email-sending-schedule.html)
+ 
+#Conclusion
+ 
+Our goal in crafting a placebo design was to ensure that we could accurately identify people outside of the treatment group who would have opened the email if they were in the treatment group ; however, this placebo design may have effectively limited our ability to maximize email open rates because we had to make the email subjects of the two groups similar. **Additionally, while both groups had very similar open rates, they still may have not been statistically similar enough for our placebo crafting to be truly effective.**  Given our low email open rates, if we were to run this experiment again, we would want to put more primacy on getting subjects to open the emails. As such, we would likely divide the subjects into 4 groups instead of 2: true control, a placebo group (similar to what we had in this experiment), a treatment group that matched the placebo group and a treatment group that received an email designed to maximize open rates. This would allow us to still get the same treatment versus placebo design while seeing if the placebo group had a different voting rate than the control group and if maximizing our design for higher email open rates had any effect.
+ 
+In conjunction with this change, we would also investigate whether including more detailed information on voter participation history would create more effect among people in our treatment group(s) who did open the emails. In an attempt to keep the emails uncluttered and easy to read, we opted to keep the voter participation history very brief; however, previous studies that did use voter participation history in a manner that successfully increased turnout tended to give more specifics. We could have included information on whether someone voted in the last election and then list the voting rates for people in a similar area like zip code. This is a secondary consideration since the biggest issue is getting subjects to open the emails (although perhaps some kind of subject line letting someone know this type of information is included could lead to a higher open rate).
+ 
+In terms of experiment design, we would also think about having fewer blocks. With so many small blocks, there were a number where none of the subjects voted in the 2017 election. As such, we lose some of the data comparisons across blocks. If we limited to 5 blocks (least “important” election of the last 4 plus one block for those that didn’t vote on any), **we would have avoided in this problem**. 
+ 
+ 
+ 
+ 
+\pagebreak
+ 
+# Appendix
+ 
+\pagebreak
+ 
+## Summary Statistics
+ 
+```{r echo=FALSE, message=FALSE}
+kable(summary(df[,other_cov_list]), digits=2, caption = "Summary for non election covariates")
+```
+ 
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+source("http://peterhaschke.com/Code/multiplot.R")
+ 
+HouseFraction = ggplot(df, aes(HouseFraction))+geom_histogram(aes(y=..density..))
+ 
+#Zip5 = ggplot(df, aes(Zip5))+geom_bar(aes(y=..count../sum(..count..)))
+Zip5 = ggplot(data.frame(Zip5 = as.numeric(as.character(df$Zip5))), aes(Zip5))+geom_histogram(aes(y=..density..), binwidth = 1)
+ 
+YearBorn = ggplot(df, aes(YearBorn))+geom_histogram(aes(y=..density..))
+ 
+Gender = ggplot(df, aes(Gender))+geom_bar(aes(y=..count../sum(..count..)))+ylab("density")
+ 
+PartyCode = ggplot(df, aes(PartyCode)) +geom_bar(aes(y=..count../sum(..count..))) +ylab("density") + theme(axis.text.x = element_text(angle=45))
+ 
+AddrCount = ggplot(df, aes(AddrCount))+geom_histogram(aes(y=..density..), binwidth = 1)
+ 
+multiplot(YearBorn, Gender, Zip5, AddrCount, PartyCode, HouseFraction, cols=2)
+```
+ 
+\newpage
+ 
+\blandscape
+ 
+ 
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+table.cor = function(dtf){
+  n = dim(dtf)[2]
+  d = data.frame("Avg" =  rep(NA,n), dtf[1:n,], row.names = colnames(dtf))
+  d[] = NA
+  for (i in 1:n){
+    d[i,1] = format(mean(dtf[,i], na.rm = TRUE), digits = 2)
+    for (j in 1:i){
+      d[i,j+1] = cell.cor(dtf[,i],dtf[,j])
+    }
+  }
+  return(d)
+}
+keep  = c("treatment", "EmailOpened","X2017", "X2016ge", "X2016pe",  "X2014ge", "X2014pe", "YearBorn", "HouseFraction", "AddrCount")
+ 
+kable(table.cor(df[,keep])[ ,-(length(keep)+1)], caption = "Correlation across numeric variables")
+```
+ 
+with p-value of correlation coefficient summarized by \* = < 0.05, \*\* = < 0.01 and \*\*\* = < 0.001 
+ 
+\elandscape
+ 
+\newpage
+ 
+## Placebo design check
+ 
+Here we show the results of regression of the email opening rate across available covariates:
+ 
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+model = lm(EmailOpened ~ df$block + Gender + YearBorn + PartyCode + AddrCount, df)
+summary(model)
+```
+ 
+\pagebreak
+ 
+## HTE and Spillover Checks
+ 
+Here we perform the same regressions but taking into account the fact that
+ 
+* the treatment effect can be heterogenous
+* there may be spillover effects, i.e. people at the same physical address may be affected by the email if they did not receive one (e.g. household)
+ 
+### HTE
+ 
+```{r echo=FALSE, message=FALSE, warning=FALSE, results = 'asis'}
+lm_itt_hte_dummy = lm(X2017 ~ treatment + X2016ge + X2016pe + X2014ge + X2014pe + treatment * (X2016ge + X2016pe + X2014ge + X2014pe), data = df)
+p_itt_hte_dummy = summary(lm_itt_hte_dummy)$coefficients[2,"Pr(>|t|)"]
+lm_cace_hte_dummy = lm(X2017 ~ treatment + X2016ge + X2016pe + X2014ge + X2014pe + treatment * (X2016ge + X2016pe + X2014ge + X2014pe), data = subset(df, df$EmailOpened))
+p_cace_hte_dummy = summary(lm_cace_hte_dummy)$coefficients[2,"Pr(>|t|)"]	
+stargazer(lm_itt_hte_dummy, lm_cace_hte_dummy, header = FALSE, single.row = TRUE, title = "ITT and CACE with Interaction Effects")
+```
+ 
+### Spill overs
+ 
+Since, for simplicity we transform the treatment into only 4 groups
+ 
+* $Y_{00}$: no treatment in the household
+* $Y_{10}$: unit treated, no other person treated in the household (incl. if only one person in household)
+* $Y_{01}$: unit not treated, but other person treated in the household
+* $Y_{11}$: all units in household treated
+ 
+We also exclude physical addresses with more than 5 person from the analysis, and create a covariate on whether the household has more than 1 person to correct for differences between the groups (`multiple_people`).
+ 
+```{r echo=FALSE, message=FALSE, warning=FALSE, results = 'asis'}
+df$y00 = (df$sum_treat == 0)
+df$y01 = (df$treatment == 0) & (df$sum_treat >= 1)
+df$y10 = (df$treatment == 1) & (df$sum_treat == 1)
+df$y11 = (df$treatment == 1) & (df$sum_treat >= 2)
+df$multiple_people = (df$AddrCount > 1)
+ 
+lm_itt_spill_dummy = lm(X2017 ~ y10 + y01 + y11 + X2016ge + X2016pe + X2014ge + X2014pe + multiple_people, data = subset(df, df$AddrCount < 6))
+p_itt_spill_dummy = summary(lm_itt_spill_dummy)$coefficients[2,"Pr(>|t|)"]	
+stargazer(lm_itt_spill_dummy, header = FALSE, single.row = TRUE, title = "ITT with Spillover effect")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results = 'asis'}
+lm_itt_spill_dummy = lm(X2017 ~ treatment + X2016ge + X2016pe + X2014ge + X2014pe, data = subset(df, df$AddrCount < 6))
+p_itt_spill_dummy = summary(lm_itt_spill_dummy)$coefficients[2,"Pr(>|t|)"]	
+stargazer(lm_itt_spill_dummy, header = FALSE, single.row = TRUE, title = "ITT without Spillover effect")
+```
+
+\newpage
+ 
+## Email Templates
+ 
+![Treatment Email](images/treatment_email.png)
+ 
+![Placebo Email](images/placebo_email.png)
+ 
